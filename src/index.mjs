@@ -6,7 +6,7 @@ import path from 'node:path'
 import { chromium } from 'playwright-core'
 
 import { loadSettings } from './config.mjs'
-import { extractPhoneNumbers, maskPhone } from './parser.mjs'
+import { extractPhoneNumbers, maskPhone, sampleAccounts } from './parser.mjs'
 
 const DEFAULT_CHROME_PATHS = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -15,7 +15,7 @@ const DEFAULT_CHROME_PATHS = [
 ]
 
 function parseArguments(argv) {
-  const result = { config: path.resolve('config.json'), dryRun: false }
+  const result = { config: path.resolve('config.json'), dryRun: false, countProvided: false }
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
     if (argument === '--dry-run') {
@@ -28,12 +28,40 @@ function parseArguments(argv) {
         throw new Error(`${argument} requires a value`)
       }
       result[argument.slice(2)] = argument === '--config' ? path.resolve(value) : Number(value)
+      if (argument === '--count') {
+        result.countProvided = true
+      }
       index += 1
       continue
     }
     throw new Error(`Unknown argument: ${argument}`)
   }
   return result
+}
+
+async function chooseAccountCount(poolSize, defaultCount, interactive) {
+  const fallback = Math.min(defaultCount, poolSize)
+  if (!interactive) {
+    return fallback
+  }
+
+  const readline = await import('node:readline/promises')
+  const { stdin, stdout } = await import('node:process')
+  const prompt = readline.createInterface({ input: stdin, output: stdout })
+  try {
+    while (true) {
+      const answer = (await prompt.question(
+        `Account pool has ${poolSize} phone numbers. How many should be opened [${fallback}]? `,
+      )).trim()
+      const count = answer === '' ? fallback : Number(answer)
+      if (Number.isInteger(count) && count >= 1 && count <= poolSize) {
+        return count
+      }
+      console.log(`Enter an integer from 1 to ${poolSize}.`)
+    }
+  } finally {
+    prompt.close()
+  }
 }
 
 async function findChrome(configuredPath) {
@@ -184,16 +212,16 @@ async function main() {
   })
   const markdown = await fs.readFile(settings.accountsFile, 'utf8')
   const accounts = extractPhoneNumbers(markdown)
-  const selectedAccounts = accounts.slice(settings.start, settings.start + settings.count)
-  if (selectedAccounts.length === 0) {
-    throw new Error('No 11-digit accounts were found in the selected range')
+  if (accounts.length === 0) {
+    throw new Error('No 11-digit accounts were found in the account pool')
   }
-  if (selectedAccounts.length < settings.count) {
-    console.warn(`Only ${selectedAccounts.length} accounts are available in the selected range`)
-  }
+  console.log(`Account pool: ${accounts.length} phone numbers`)
+  const interactive = process.stdin.isTTY && !args.dryRun && !args.countProvided
+  const selectedCount = await chooseAccountCount(accounts.length, settings.count, interactive)
+  const selectedAccounts = sampleAccounts(accounts, selectedCount)
 
   if (args.dryRun) {
-    console.log(`accounts=${accounts.length}, selected=${selectedAccounts.length}`)
+    console.log(`accounts=${accounts.length}, selected=${selectedAccounts.length}, selection=random`)
     console.log(`profileRoot=${settings.profileRoot}`)
     return
   }

@@ -22,66 +22,25 @@ if (-not (Test-Path -LiteralPath $configPath)) {
         siteUrl = 'https://xiaolvshu.app/login'
         profileRoot = $profileRoot
         chromePath = ''
+        smsCode = ''
     }
     $config | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
     Write-Host "Saved local settings to $configPath"
 }
 
 $storedConfig = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json
-$defaultCount = 2
-if ($null -ne $storedConfig.count) {
-    $defaultCount = [int]$storedConfig.count
-}
-$defaultStart = 1
-if ($null -ne $storedConfig.start) {
-    $defaultStart = [int]$storedConfig.start + 1
-}
-
-$count = 0
-while ($count -lt 1) {
-    $countText = Read-Host "Number of accounts to open [$defaultCount]"
-    if ([string]::IsNullOrWhiteSpace($countText)) {
-        $count = $defaultCount
-        break
-    }
-    if (-not [int]::TryParse($countText, [ref]$count) -or $count -lt 1) {
-        Write-Host 'Enter an integer greater than zero.'
-        $count = 0
-    }
-}
-
-$startOneBased = 0
-while ($startOneBased -lt 1) {
-    $startText = Read-Host "Starting account number, beginning at 1 [$defaultStart]"
-    if ([string]::IsNullOrWhiteSpace($startText)) {
-        $startOneBased = $defaultStart
-        break
-    }
-    if (-not [int]::TryParse($startText, [ref]$startOneBased) -or $startOneBased -lt 1) {
-        Write-Host 'Enter an integer greater than zero.'
-        $startOneBased = 0
-    }
-}
-$start = $startOneBased - 1
-
-$secureSmsCode = Read-Host 'Shared SMS verification code (leave blank to reuse existing sessions)' -AsSecureString
-$smsCodePointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureSmsCode)
-try {
-    $smsCode = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($smsCodePointer)
-}
-finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($smsCodePointer)
+$smsCode = $env:XIAOLVSHU_SMS_CODE
+if ([string]::IsNullOrWhiteSpace($smsCode)) {
+    $smsCode = [string]$storedConfig.smsCode
 }
 if ([string]::IsNullOrWhiteSpace($smsCode)) {
-    Remove-Item Env:XIAOLVSHU_SMS_CODE -ErrorAction SilentlyContinue
+    throw 'Set smsCode in the local ignored config.json before launching.'
 }
-else {
-    $env:XIAOLVSHU_SMS_CODE = $smsCode
-}
+$env:XIAOLVSHU_SMS_CODE = $smsCode
 
 $exitCode = 0
 try {
-    & node (Join-Path $projectRoot 'src\index.mjs') --config $configPath --count $count --start $start
+    & node (Join-Path $projectRoot 'src\index.mjs') --config $configPath
     $exitCode = $LASTEXITCODE
 }
 finally {

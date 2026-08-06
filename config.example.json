@@ -4,5 +4,6 @@
   "start": 0,
   "siteUrl": "https://xiaolvshu.app/login",
   "profileRoot": "%LOCALAPPDATA%/XiaolvshuMultiLogin/profiles",
-  "chromePath": ""
+  "chromePath": "",
+  "smsCode": ""
 }
