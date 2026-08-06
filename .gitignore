@@ -1,6 +1,5 @@
 node_modules/
 config.json
-selected-accounts.json
 profiles/
 logs/
 *.log

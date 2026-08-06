@@ -49,6 +49,5 @@ export async function loadSettings(configPath, overrides = {}) {
     siteUrl,
     profileRoot: path.resolve(baseDirectory, expandEnvironment(profileRoot)),
     chromePath: overrides.chromePath ?? config.chromePath ?? '',
-    smsCode: config.smsCode ?? '',
   }
 }
