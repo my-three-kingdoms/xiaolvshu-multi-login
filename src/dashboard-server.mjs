@@ -65,31 +65,20 @@ async function fetchPosts(settings, phone) {
   if (!context) context = await createContext(settings, phone)
   const page = context.pages()[0] ?? await context.newPage()
   await page.goto(settings.siteUrl.replace(/\/login\/?$/, '/'), { waitUntil: 'domcontentloaded', timeout: 30000 })
-  const feed = await page.evaluate(async () => {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
-    try {
-      const response = await fetch('/api/v1/feed?channel=latest', { signal: controller.signal })
-      if (!response.ok) throw new Error(`Feed request failed (${response.status})`)
-      return await response.json()
-    } finally {
-      clearTimeout(timeout)
-    }
+  await page.waitForTimeout(1200)
+  return page.evaluate(() => {
+    const selectors = ['article', '[data-testid*="post"]', '[class*="post-card"]', '[class*="note-card"]', 'main a[href*="/explore/"]']
+    const nodes = selectors.flatMap((selector) => [...document.querySelectorAll(selector)])
+    const seen = new Set()
+    return nodes.map((node, index) => {
+      const link = node.matches('a[href]') ? node : node.querySelector('a[href]')
+      const href = link?.href ?? ''
+      const text = (node.innerText || link?.innerText || '').replace(/\s+/g, ' ').trim()
+      if (!href || !text || seen.has(href)) return null
+      seen.add(href)
+      return { id: `${index}-${href}`, title: text.slice(0, 100), url: href }
+    }).filter(Boolean).slice(0, 50)
   })
-  return (feed.items ?? []).map((item) => ({
-    id: item.post_id,
-    title: item.title,
-    author: item.author?.display_name ?? '',
-    time: item.last_active_at ?? '',
-    url: new URL(`/posts/${encodeURIComponent(item.post_id)}`, page.url()).href,
-  })).sort((left, right) => right.time.localeCompare(left.time)).slice(0, 50)
-}
-
-async function openPost(settings, phone, url) {
-  let context = activeContexts.get(phone)
-  if (!context) context = await createContext(settings, phone)
-  const page = context.pages()[0] ?? await context.newPage()
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
 }
 
 async function main() {
@@ -116,30 +105,11 @@ async function main() {
         for await (const chunk of request) body += chunk
         const payload = JSON.parse(body || '{}')
         if (!payload.phone || !payload.url) return json(response, 400, { error: 'phone and url are required' })
-        const target = new URL(payload.url)
-        const site = new URL(settings.siteUrl)
-        if (target.origin !== site.origin || !target.pathname.startsWith('/posts/')) {
-          return json(response, 400, { error: 'Only xiaolvshu post URLs can be opened' })
-        }
-        await openPost(settings, payload.phone, target.href)
+        let context = activeContexts.get(payload.phone)
+        if (!context) context = await createContext(settings, payload.phone)
+        const page = context.pages()[0] ?? await context.newPage()
+        await page.goto(payload.url, { waitUntil: 'domcontentloaded', timeout: 30000 })
         return json(response, 200, { ok: true })
-      }
-      if (request.method === 'POST' && url.pathname === '/api/open-all') {
-        let body = ''
-        for await (const chunk of request) body += chunk
-        const payload = JSON.parse(body || '{}')
-        if (!payload.url) return json(response, 400, { error: 'url is required' })
-        const target = new URL(payload.url)
-        const site = new URL(settings.siteUrl)
-        if (target.origin !== site.origin || !target.pathname.startsWith('/posts/')) {
-          return json(response, 400, { error: 'Only xiaolvshu post URLs can be opened' })
-        }
-        const accounts = await readAccounts(settings)
-        const results = await Promise.allSettled(accounts.map((phone) => openPost(settings, phone, target.href)))
-        return json(response, 200, {
-          total: accounts.length,
-          opened: results.filter((result) => result.status === 'fulfilled').length,
-        })
       }
       return json(response, 404, { error: 'Not found' })
     } catch (error) {
