@@ -11,6 +11,7 @@ import { extractPhoneNumbers, maskPhone } from './parser.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const htmlPath = path.join(root, 'dashboard', 'index.html')
+const selectedAccountsPath = path.join(root, 'selected-accounts.json')
 const activeContexts = new Map()
 const chromePaths = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -55,16 +56,71 @@ async function createContext(settings, phone) {
   return context
 }
 
+async function usableContext(settings, phone) {
+  const existing = activeContexts.get(phone)
+  if (existing) {
+    try {
+      existing.pages()
+      return existing
+    } catch {
+      activeContexts.delete(phone)
+    }
+  }
+  return createContext(settings, phone)
+}
+
+async function visible(locator) {
+  try {
+    return await locator.isVisible()
+  } catch {
+    return false
+  }
+}
+
+async function loginIfNeeded(page, settings, phone) {
+  await page.waitForTimeout(900)
+  if (!new URL(page.url()).pathname.startsWith('/login')) return
+  if (!settings.smsCode) throw new Error('This profile is signed out and smsCode is missing from config.json')
+  const phoneInput = page.locator('input[aria-label="手机号"], #login-phone-d, #login-phone-edit-d, input[type="tel"]').first()
+  await phoneInput.waitFor({ state: 'visible', timeout: 20000 })
+  await phoneInput.fill(phone)
+  const form = page.locator('form').first()
+  await form.locator('button[type="submit"]:visible').click()
+  const dialog = page.locator('[role="dialog"]:visible').first()
+  try {
+    await dialog.waitFor({ state: 'visible', timeout: 3000 })
+    const primary = dialog.locator('.login-legal-action--primary:visible').first()
+    if (await visible(primary)) await primary.click()
+  } catch {
+    // The legal notice is optional on an already acknowledged profile.
+  }
+  const codeInput = page.locator('input[aria-label="短信验证码"], #login-code-d, input[autocomplete="one-time-code"]').first()
+  await codeInput.waitFor({ state: 'visible', timeout: 15000 })
+  const requestButton = page.locator('button:visible').filter({ hasText: /获取验证码/ }).first()
+  if (await visible(requestButton)) await requestButton.click()
+  await codeInput.fill(settings.smsCode)
+  await form.locator('button[type="submit"]:visible').click()
+  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 15000 })
+}
+
 async function readAccounts(settings) {
   const content = await fs.readFile(settings.accountsFile, 'utf8')
-  return extractPhoneNumbers(content)
+  const pool = extractPhoneNumbers(content)
+  try {
+    const state = JSON.parse(await fs.readFile(selectedAccountsPath, 'utf8'))
+    const selected = [...new Set(state.accounts ?? [])].filter((phone) => pool.includes(phone))
+    if (selected.length > 0) return { accounts: selected, source: 'last-selection' }
+  } catch {
+    // Fall back to the full pool before the first launcher run.
+  }
+  return { accounts: pool, source: 'pool' }
 }
 
 async function fetchPosts(settings, phone) {
-  let context = activeContexts.get(phone)
-  if (!context) context = await createContext(settings, phone)
+  const context = await usableContext(settings, phone)
   const page = context.pages()[0] ?? await context.newPage()
   await page.goto(settings.siteUrl.replace(/\/login\/?$/, '/'), { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await loginIfNeeded(page, settings, phone)
   const feed = await page.evaluate(async () => {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 15000)
@@ -86,9 +142,10 @@ async function fetchPosts(settings, phone) {
 }
 
 async function openPost(settings, phone, url) {
-  let context = activeContexts.get(phone)
-  if (!context) context = await createContext(settings, phone)
+  const context = await usableContext(settings, phone)
   const page = context.pages()[0] ?? await context.newPage()
+  await page.goto(settings.siteUrl.replace(/\/login\/?$/, '/'), { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await loginIfNeeded(page, settings, phone)
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
 }
 
@@ -103,8 +160,8 @@ async function main() {
         return response.end(await fs.readFile(htmlPath))
       }
       if (request.method === 'GET' && url.pathname === '/api/accounts') {
-        const accounts = await readAccounts(settings)
-        return json(response, 200, { accounts: accounts.map((phone) => ({ phone, label: maskPhone(phone) })) })
+        const accountState = await readAccounts(settings)
+        return json(response, 200, { source: accountState.source, accounts: accountState.accounts.map((phone) => ({ phone, label: maskPhone(phone) })) })
       }
       if (request.method === 'GET' && url.pathname === '/api/posts') {
         const phone = url.searchParams.get('phone')
@@ -134,10 +191,10 @@ async function main() {
         if (target.origin !== site.origin || !target.pathname.startsWith('/posts/')) {
           return json(response, 400, { error: 'Only xiaolvshu post URLs can be opened' })
         }
-        const accounts = await readAccounts(settings)
-        const results = await Promise.allSettled(accounts.map((phone) => openPost(settings, phone, target.href)))
+        const accountState = await readAccounts(settings)
+        const results = await Promise.allSettled(accountState.accounts.map((phone) => openPost(settings, phone, target.href)))
         return json(response, 200, {
-          total: accounts.length,
+          total: accountState.accounts.length,
           opened: results.filter((result) => result.status === 'fulfilled').length,
         })
       }

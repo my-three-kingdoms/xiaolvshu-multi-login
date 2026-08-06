@@ -82,6 +82,11 @@ function profileDirectory(profileRoot, phone) {
   return path.join(profileRoot, `account-${key}`)
 }
 
+async function saveSelectedAccounts(configPath, accounts) {
+  const statePath = path.join(path.dirname(configPath), 'selected-accounts.json')
+  await fs.writeFile(statePath, JSON.stringify({ selectedAt: new Date().toISOString(), accounts }, null, 2), 'utf8')
+}
+
 async function visible(locator) {
   try {
     return await locator.isVisible()
@@ -227,6 +232,7 @@ async function main() {
   }
 
   const smsCode = process.env.XIAOLVSHU_SMS_CODE ?? ''
+  await saveSelectedAccounts(args.config, selectedAccounts)
   const chromePath = await findChrome(settings.chromePath)
   await fs.mkdir(settings.profileRoot, { recursive: true })
   console.log(`Opening ${selectedAccounts.length} isolated Chrome windows on ${os.platform()}`)
