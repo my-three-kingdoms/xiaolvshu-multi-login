@@ -1,0 +1,13 @@
+{
+  "name": "xiaolvshu-multi-login",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/config.mjs && node --check src/parser.mjs && node --check src/index.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright-core": "^1.55.0"
+  }
+}

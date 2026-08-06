@@ -1,0 +1,8 @@
+{
+  "accountsFile": "C:/path/to/电话号码列表.md",
+  "count": 2,
+  "start": 0,
+  "siteUrl": "https://xiaolvshu.app/login",
+  "profileRoot": "%LOCALAPPDATA%/XiaolvshuMultiLogin/profiles",
+  "chromePath": ""
+}
